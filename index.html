@@ -62,10 +62,17 @@
 
       <!-- 右側工具區：深色模式切換與歷史日期選擇 -->
       <div class="flex items-center space-x-3">
+        <!-- 手動重新整理/ API 同步按鈕 -->
+        <button onclick="refreshFromTwseApi()" title="從 TWSE API 重新同步資料" class="flex items-center space-x-1 px-3 py-2 text-xs font-semibold rounded-lg bg-red-500 hover:bg-red-600 text-white shadow-xs transition">
+          <i id="api-refresh-icon" class="fa-solid fa-arrows-rotate"></i>
+          <span class="hidden sm:inline">同步 API</span>
+        </button>
+
         <!-- 歷史日期選擇下拉選單 -->
         <div class="relative">
           <select id="date-select" onchange="handleDateChange(this.value)" class="bg-slate-100 dark:bg-slate-700 text-xs sm:text-sm font-medium px-3 py-2 pr-8 rounded-lg border border-slate-300 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer">
-            <option value="latest">載入中...</option>
+            <option value="twse_api">TWSE 直連 API (最新)</option>
+            <option value="latest">靜態歷史檔 (最新)</option>
           </select>
           <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500 dark:text-slate-400">
             <i class="fa-solid fa-chevron-down text-xs"></i>
@@ -76,6 +83,27 @@
         <button onclick="toggleDarkMode()" title="切換深淺模式" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
           <i id="dark-icon" class="fa-solid fa-moon"></i>
         </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- 狀態資訊列 (Status Banner) -->
+    <div id="status-banner" class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span id="market-status-badge" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+          <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> 連線中
+        </span>
+        <span id="data-source-badge" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+          來源：TWSE API
+        </span>
+        <span id="data-date-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">
+          交易日期：--
+        </span>
+      </div>
+      <div id="api-endpoint-text" class="text-xs text-slate-400 font-mono truncate max-w-md">
+        API: https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data
       </div>
     </div>
   </header>
@@ -226,6 +254,8 @@
       filteredStocks: [],     // 經過搜尋/篩選後的個股清單
       currentDate: '',        // 資料所屬交易日期 YYYY-MM-DD
       availableDates: [],     // 可供切換的歷史日期清單
+      dataSourceLabel: 'TWSE API',
+      lastUpdatedTime: '',
       
       // 控制項狀態
       searchQuery: '',
@@ -244,8 +274,206 @@
     document.addEventListener('DOMContentLoaded', async () => {
       initTheme();
       await fetchDateIndex();
-      await loadStockData('latest');
+      await loadStockData('twse_api');
     });
+
+    // 從證交所 API (https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data) 抓取資料
+    async function fetchFromTwseApi() {
+      const primaryUrl = 'https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data';
+      const openApiUrl = 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL';
+
+      // 備選呼叫清單（解決跨網域 CORS 問題）
+      const candidates = [
+        { url: primaryUrl, label: 'TWSE 官方 API (直連)' },
+        { url: openApiUrl, label: 'TWSE OpenAPI (直連)' },
+        { url: `https://corsproxy.io/?${encodeURIComponent(primaryUrl)}`, label: 'TWSE API (CORS 代理 1)' },
+        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(primaryUrl)}`, label: 'TWSE API (CORS 代理 2)' }
+      ];
+
+      for (const cand of candidates) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 7000); // 7 秒超時
+          
+          const res = await fetch(cand.url, { signal: controller.signal });
+          clearTimeout(timeoutId);
+
+          if (!res.ok) continue;
+
+          const rawJson = await res.json();
+          let rawArray = [];
+
+          if (Array.isArray(rawJson)) {
+            rawArray = rawJson;
+          } else if (rawJson && Array.isArray(rawJson.data)) {
+            rawArray = rawJson.data;
+          }
+
+          if (rawArray.length > 0) {
+            const parsed = rawArray.map(normalizeTwseApiItem).filter(Boolean);
+            if (parsed.length > 0) {
+              return { data: parsed, label: cand.label };
+            }
+          }
+        } catch (err) {
+          console.warn(`[TWSE API] 嘗試連線 ${cand.label} 失敗:`, err.message);
+        }
+      }
+
+      throw new Error('無法連線至證交所 API，可能受限於網路或跨網域 CORS 規範');
+    }
+
+    // 將 TWSE API 傳回的各類欄位結構進行標準化轉換
+    function normalizeTwseApiItem(item) {
+      if (!item) return null;
+
+      // 陣列結構相容
+      if (Array.isArray(item)) {
+        return buildStockRecord(
+          item[0], item[1], item[2], item[3],
+          item[4], item[5], item[6], item[7], item[8], item[9]
+        );
+      }
+
+      // 物件結構相容 (中文鍵值或英文鍵值)
+      const code = item.Code || item.code || item['證券代號'];
+      const name = item.Name || item.name || item['證券名稱'];
+      const tradeVolume = item.TradeVolume || item.tradeVolume || item['成交股數'];
+      const tradeValue = item.TradeValue || item.tradeValue || item['成交金額'];
+      const open = item.OpeningPrice || item.open || item['開盤價'];
+      const high = item.HighestPrice || item.high || item['最高價'];
+      const low = item.LowestPrice || item.low || item['最低價'];
+      const close = item.ClosingPrice || item.close || item['收盤價'];
+      const transaction = item.Transaction || item.transaction || item['成交筆數'];
+
+      let rawChange = item.Change || item.change || item['漲跌價差'] || item['漲跌'] || 0;
+      let changeSign = 1;
+      if (typeof rawChange === 'string') {
+        if (rawChange.includes('-')) changeSign = -1;
+        rawChange = rawChange.replace(/<[^>]*>/g, '').replace(/[+,\s]/g, '');
+      }
+      let change = parseNumberVal(rawChange);
+      if (change !== null && changeSign === -1 && change > 0) {
+        change = -change;
+      }
+
+      return buildStockRecord(code, name, tradeVolume, tradeValue, open, high, low, close, change, transaction);
+    }
+
+    function parseNumberVal(val) {
+      if (val === null || val === undefined || val === '' || val === '--') return null;
+      if (typeof val === 'number') return isNaN(val) ? null : val;
+      const clean = String(val).replace(/<[^>]*>/g, '').replace(/,/g, '').trim();
+      const num = parseFloat(clean);
+      return isNaN(num) ? null : num;
+    }
+
+    function buildStockRecord(code, name, volume, val, open, high, low, close, change, transaction) {
+      const cleanCode = String(code || '').trim();
+      const cleanName = String(name || '').trim();
+
+      if (!cleanCode || !cleanName) return null;
+
+      const closeNum = parseNumberVal(close);
+      const changeNum = parseNumberVal(change) || 0;
+      
+      let changePercent = 0;
+      if (closeNum !== null && (closeNum - changeNum) > 0) {
+        changePercent = (changeNum / (closeNum - changeNum)) * 100;
+      }
+
+      return {
+        code: cleanCode,
+        name: cleanName,
+        tradeVolume: parseNumberVal(volume) || 0,
+        tradeValue: parseNumberVal(val) || 0,
+        open: parseNumberVal(open),
+        high: parseNumberVal(high),
+        low: parseNumberVal(low),
+        close: closeNum,
+        change: changeNum,
+        transaction: parseNumberVal(transaction) || 0,
+        changePercent: parseFloat(changePercent.toFixed(2))
+      };
+    }
+
+    // 4. 載入資料 (支援 TWSE API 或歷史檔案)
+    async function loadStockData(dateTarget) {
+      const statusBadge = document.getElementById('market-status-badge');
+      const sourceBadge = document.getElementById('data-source-badge');
+      const dateText = document.getElementById('data-date-text');
+      const apiIcon = document.getElementById('api-refresh-icon');
+
+      apiIcon.classList.add('fa-spin');
+      statusBadge.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i> 資料連線中';
+      statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
+
+      if (dateTarget === 'twse_api') {
+        try {
+          const apiResult = await fetchFromTwseApi();
+          state.allStocks = apiResult.data;
+          state.currentDate = getTaiwanTodayDate();
+          state.dataSourceLabel = apiResult.label;
+
+          statusBadge.innerHTML = '<i class="fa-solid fa-bolt mr-1"></i> TWSE API 即時連線';
+          statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+          sourceBadge.innerText = `來源：${state.dataSourceLabel}`;
+          sourceBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+
+        } catch (err) {
+          console.warn('TWSE API 連線失敗，切換至備用展示資料:', err);
+          state.allStocks = generateMockStockData();
+          state.currentDate = getTaiwanTodayDate();
+          state.dataSourceLabel = '展示模擬資料 (API 連線受限)';
+
+          statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i> API 連線受限';
+          statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+          sourceBadge.innerText = state.dataSourceLabel;
+          sourceBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+        }
+      } else {
+        // 從本地 JSON 歷史檔案載入
+        let fetchUrl = dateTarget === 'latest' ? `data/latest.json?t=${Date.now()}` : `data/daily/${dateTarget}.json?t=${Date.now()}`;
+        try {
+          const res = await fetch(fetchUrl);
+          if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+          const jsonResult = await res.json();
+          
+          const rawList = Array.isArray(jsonResult) ? jsonResult : (jsonResult.data || []);
+          state.allStocks = rawList.map(normalizeTwseApiItem).filter(Boolean);
+          state.currentDate = jsonResult.date || dateTarget;
+          state.dataSourceLabel = '伺服器歷史備份檔';
+
+          statusBadge.innerHTML = '<i class="fa-solid fa-database mr-1"></i> 靜態數據備份';
+          statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+          sourceBadge.innerText = `來源：${state.dataSourceLabel}`;
+          sourceBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+
+        } catch (err) {
+          state.allStocks = generateMockStockData();
+          state.currentDate = getTaiwanTodayDate();
+          state.dataSourceLabel = '展示模擬資料';
+          
+          statusBadge.innerHTML = '<i class="fa-solid fa-flask mr-1"></i> 模擬展示資料';
+          statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+          sourceBadge.innerText = state.dataSourceLabel;
+        }
+      }
+
+      apiIcon.classList.remove('fa-spin');
+      dateText.innerText = `交易日期：${state.currentDate}`;
+      
+      // 計算全市場概況
+      calculateMarketMetrics(state.allStocks);
+      applyFiltersAndSort();
+    }
+
+    // 手動觸發重新整理 API
+    function refreshFromTwseApi() {
+      const select = document.getElementById('date-select');
+      select.value = 'twse_api';
+      loadStockData('twse_api');
+    }
 
     // 暗黑模式控制
     function initTheme() {
