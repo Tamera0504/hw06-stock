@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>台股每日個股日成交資訊看板 | TWSE Stock Dashboard</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind CSS 配置 (客製化台股紅漲綠跌主題) -->
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            stockUp: '#ef4444',     // 台股漲：紅
+            stockDown: '#22c55e',   // 台股跌：綠
+            stockFlat: '#6b7280',   // 平盤：灰
+          }
+        }
+      }
+    }
+  </script>
+  <!-- FontAwesome 圖示 -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+  <style>
+    /* 隱藏原生 Chrome/Safari 捲軸預設樣式 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    .dark ::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+    .dark ::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 min-h-screen font-sans transition-colors duration-200">
+
+  <!-- 頂端導覽列 -->
+  <header class="sticky top-0 z-30 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="p-2 bg-red-500 text-white rounded-lg shadow-md shadow-red-500/20">
+          <i class="fa-solid font-bold fa-chart-line text-xl"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold leading-tight">台股每日個股成交資訊</h1>
+          <p class="text-xs text-slate-500 dark:text-slate-400">TWSE Daily Stock Market Dashboard</p>
+        </div>
+      </div>
+
+      <!-- 右側工具區：深色模式切換與歷史日期選擇 -->
+      <div class="flex items-center space-x-3">
+        <!-- 歷史日期選擇下拉選單 -->
+        <div class="relative">
+          <select id="date-select" onchange="handleDateChange(this.value)" class="bg-slate-100 dark:bg-slate-700 text-xs sm:text-sm font-medium px-3 py-2 pr-8 rounded-lg border border-slate-300 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-red-500 appearance-none cursor-pointer">
+            <option value="latest">載入中...</option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500 dark:text-slate-400">
+            <i class="fa-solid fa-chevron-down text-xs"></i>
+          </div>
+        </div>
+
+        <!-- 深色模式切換按鈕 -->
+        <button onclick="toggleDarkMode()" title="切換深淺模式" class="p-2 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition">
+          <i id="dark-icon" class="fa-solid fa-moon"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- 狀態資訊列 (Status Banner) -->
+    <div id="status-banner" class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div class="flex items-center space-x-3">
+        <span id="market-status-badge" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+          <i class="fa-solid fa-circle-notch fa-spin mr-1"></i> 資料載入中
+        </span>
+        <span id="data-date-text" class="text-sm font-medium text-slate-600 dark:text-slate-300">
+          交易日期：--
+        </span>
+      </div>
+      <div id="demo-notice" class="hidden text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-3 py-1.5 rounded-lg border border-amber-200 dark:border-amber-800 flex items-center gap-1.5">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span>尚未偵測到 GitHub Actions 數據檔案，目前顯示展示用模擬資料</span>
+      </div>
+    </div>
+
+    <!-- 市場概況指標卡片 (Summary Market Metrics) -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <div class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">上市監測個股總數</div>
+        <div id="metric-total-stocks" class="text-xl font-bold text-slate-800 dark:text-slate-100">-- 檔</div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <div class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">上漲家數 / 下跌家數</div>
+        <div class="text-lg font-bold flex items-center space-x-2">
+          <span id="metric-up-count" class="text-red-500">--</span>
+          <span class="text-slate-400">/</span>
+          <span id="metric-down-count" class="text-green-500">--</span>
+        </div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <div class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">全市場總成交金額</div>
+        <div id="metric-total-value" class="text-xl font-bold text-slate-800 dark:text-slate-100">-- 億元</div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+        <div class="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">全市場總成交量</div>
+        <div id="metric-total-volume" class="text-xl font-bold text-slate-800 dark:text-slate-100">-- 萬張</div>
+      </div>
+    </div>
+
+    <!-- 表格控制區 (Search & Filters) -->
+    <div class="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+        
+        <!-- 搜尋列 (具備 Debounce) -->
+        <div class="relative flex-1 max-w-md">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+            <i class="fa-solid fa-magnifying-glass"></i>
+          </div>
+          <input 
+            type="text" 
+            id="search-input"
+            oninput="handleSearchInput(this.value)"
+            placeholder="搜尋證券代號或名稱 (如：2330, 台積電)..." 
+            class="w-full pl-9 pr-4 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 transition"
+          />
+        </div>
+
+        <!-- 分類快速篩選與分頁筆數選項 -->
+        <div class="flex flex-wrap items-center justify-between md:justify-end gap-3">
+          <!-- 漲跌分頁標籤 -->
+          <div class="flex bg-slate-100 dark:bg-slate-700 p-1 rounded-lg text-xs font-medium">
+            <button onclick="setTrendFilter('ALL')" id="filter-all" class="px-3 py-1.5 rounded-md bg-white dark:bg-slate-800 shadow-xs text-slate-800 dark:text-slate-100 font-semibold transition">全部</button>
+            <button onclick="setTrendFilter('UP')" id="filter-up" class="px-3 py-1.5 rounded-md text-red-500 hover:bg-white/50 dark:hover:bg-slate-800/50 transition">上漲</button>
+            <button onclick="setTrendFilter('DOWN')" id="filter-down" class="px-3 py-1.5 rounded-md text-green-500 hover:bg-white/50 dark:hover:bg-slate-800/50 transition">下跌</button>
+            <button onclick="setTrendFilter('FLAT')" id="filter-flat" class="px-3 py-1.5 rounded-md text-slate-500 hover:bg-white/50 dark:hover:bg-slate-800/50 transition">平盤</button>
+          </div>
+
+          <!-- 每頁顯示筆數 -->
+          <div class="flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400">
+            <span>每頁：</span>
+            <select id="page-size-select" onchange="handlePageSizeChange(this.value)" class="bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded px-2 py-1 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-red-500">
+              <option value="25">25 筆</option>
+              <option value="50" selected>50 筆</option>
+              <option value="100">100 筆</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 個股資料表格區 -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="bg-slate-100/70 dark:bg-slate-700/50 text-xs font-semibold text-slate-600 dark:text-slate-300 uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 select-none">
+              <th onclick="sortTable('code')" class="py-3 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                代號 <i id="sort-icon-code" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('name')" class="py-3 px-4 cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                證券名稱 <i id="sort-icon-name" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('close')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                收盤價 <i id="sort-icon-close" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('change')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                漲跌價差 <i id="sort-icon-change" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('changePercent')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                漲跌幅 <i id="sort-icon-changePercent" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('open')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700 hidden sm:table-cell">開盤價</th>
+              <th onclick="sortTable('high')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700 hidden md:table-cell">最高價</th>
+              <th onclick="sortTable('low')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700 hidden md:table-cell">最低價</th>
+              <th onclick="sortTable('tradeVolume')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700">
+                成交張數 <i id="sort-icon-tradeVolume" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+              <th onclick="sortTable('tradeValue')" class="py-3 px-4 text-right cursor-pointer hover:bg-slate-200/50 dark:hover:bg-slate-700 hidden lg:table-cell">
+                成交金額(萬) <i id="sort-icon-tradeValue" class="fa-solid fa-sort text-slate-400 ml-1"></i>
+              </th>
+            </tr>
+          </thead>
+          <tbody id="stock-table-body" class="divide-y divide-slate-100 dark:divide-slate-700/50 font-mono">
+            <!-- 由 JavaScript 動態注入列表 -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 無資料時顯示畫面 -->
+      <div id="no-data-msg" class="hidden p-12 text-center text-slate-400">
+        <i class="fa-solid fa-magnifying-glass-slash text-4xl mb-3 block"></i>
+        <p class="text-base font-medium">找不到符合條件的股票資料</p>
+        <p class="text-xs mt-1">請嘗試變更搜尋關鍵字或清除篩選條件</p>
+      </div>
+
+      <!-- 分頁頁碼區 (Pagination) -->
+      <div class="p-4 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+        <div id="pagination-info">
+          顯示第 0 至 0 筆，共 0 筆資料
+        </div>
+        <div class="flex items-center space-x-1" id="pagination-buttons">
+          <!-- JS 動態產生頁碼 -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 全域核心狀態與 JavaScript 邏輯 -->
+  <script>
+    // 1. 全域應用程式狀態 (Application State)
+    let state = {
+      allStocks: [],          // 完整原始個股清單
+      filteredStocks: [],     // 經過搜尋/篩選後的個股清單
+      currentDate: '',        // 資料所屬交易日期 YYYY-MM-DD
+      availableDates: [],     // 可供切換的歷史日期清單
+      
+      // 控制項狀態
+      searchQuery: '',
+      trendFilter: 'ALL',     // ALL, UP, DOWN, FLAT
+      pageSize: 50,
+      currentPage: 1,
+      
+      // 排序狀態
+      sortColumn: 'tradeValue', // 預設依成交金額排序
+      sortDirection: 'desc'     // asc, desc
+    };
+
+    let searchDebounceTimer = null;
+
+    // 2. 初始化流程 (Initialization)
+    document.addEventListener('DOMContentLoaded', async () => {
+      initTheme();
+      await fetchDateIndex();
+      await loadStockData('latest');
+    });
+
+    // 暗黑模式控制
+    function initTheme() {
+      if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+        document.getElementById('dark-icon').className = 'fa-solid fa-sun';
+      } else {
+        document.documentElement.classList.remove('dark');
+        document.getElementById('dark-icon').className = 'fa-solid fa-moon';
+      }
+    }
+
+    function toggleDarkMode() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.theme = isDark ? 'dark' : 'light';
+      document.getElementById('dark-icon').className = isDark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    }
+
+    // 3. 取得歷史日期 Index
+    async function fetchDateIndex() {
+      const select = document.getElementById('date-select');
+      try {
+        const res = await fetch(`data/index.json?t=${Date.now()}`);
+        if (!res.ok) throw new Error('No index file');
+        state.availableDates = await res.json();
+        
+        // 渲染下拉選單
+        select.innerHTML = '<option value="latest">最新交易日</option>';
+        state.availableDates.slice().reverse().forEach(date => {
+          const opt = document.createElement('option');
+          opt.value = date;
+          opt.textContent = date;
+          select.appendChild(opt);
+        });
+      } catch (err) {
+        console.warn('Index file not found, defaulting to latest option only.');
+        select.innerHTML = '<option value="latest">最新交易日</option>';
+      }
+    }
+
+    // 4. 載入指定日期個股 JSON 資料
+    async function loadStockData(dateTarget) {
+      const statusBadge = document.getElementById('market-status-badge');
+      const dateText = document.getElementById('data-date-text');
+      const demoNotice = document.getElementById('demo-notice');
+
+      statusBadge.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i> 資料載入中';
+      statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
+
+      let fetchUrl = dateTarget === 'latest' ? `data/latest.json?t=${Date.now()}` : `data/daily/${dateTarget}.json?t=${Date.now()}`;
+
+      try {
+        const res = await fetch(fetchUrl);
+        if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+        
+        const jsonResult = await res.json();
+        
+        // 解析資料格式 (支援兩種 structure: { date, data } 或純 Array)
+        if (Array.isArray(jsonResult)) {
+          state.allStocks = processRawStockArray(jsonResult);
+          state.currentDate = dateTarget === 'latest' ? getTaiwanTodayDate() : dateTarget;
+        } else {
+          state.allStocks = processRawStockArray(jsonResult.data || []);
+          state.currentDate = jsonResult.date || getTaiwanTodayDate();
+        }
+
+        demoNotice.classList.add('hidden');
+        updateMarketStatusBadge(state.currentDate);
+
+      } catch (err) {
+        console.warn('無法從伺服器讀取 JSON 檔案，使用展示用 Mock Data:', err);
+        // Fallback 至展示模擬資料
+        state.allStocks = generateMockStockData();
+        state.currentDate = getTaiwanTodayDate();
+        demoNotice.classList.remove('hidden');
+        
+        statusBadge.innerHTML = '<i class="fa-solid fa-flask mr-1"></i> 模擬展示資料';
+        statusBadge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+      }
+
+      dateText.innerText = `交易日期：${state.currentDate}`;
+      
+      // 算算全市場摘要指標
+      calculateMarketMetrics(state.allStocks);
+
+      // 套用過濾與排序
+      applyFiltersAndSort();
+    }
+
+    // 5. 資料處理解析 (確保型別正確、計算漲跌幅)
+    function processRawStockArray(dataArray) {
+      return dataArray.map(item => {
+        const close = item.close;
+        const change = item.change || 0;
+        
+        // 計算漲跌幅 (漲跌幅 = 漲跌價差 / (收盤價 - 漲跌價差) * 100)
+        let changePercent = 0;
+        if (close !== null && close !== undefined && (close - change) > 0) {
+          changePercent = (change / (close - change)) * 100;
+        }
+
+        return {
+          code: String(item.code || ''),
+          name: String(item.name || ''),
+          tradeVolume: item.tradeVolume || 0, // 成交股數
+          tradeValue: item.tradeValue || 0,   // 成交金額
+          open: item.open,
+          high: item.high,
+          low: item.low,
+          close: item.close,
+          change: change,
+          transaction: item.transaction || 0,
+          changePercent: parseFloat(changePercent.toFixed(2))
+        };
+      });
+    }
+
+    // 6. 全市場概況指標計算
+    function calculateMarketMetrics(stocks) {
+      let upCount = 0;
+      let downCount = 0;
+      let totalVal = 0;
+      let totalVol = 0;
+
+      stocks.forEach(s => {
+        if (s.change > 0) upCount++;
+        else if (s.change < 0) downCount++;
+
+        totalVal += (s.tradeValue || 0);
+        totalVol += (s.tradeVolume || 0);
+      });
+
+      document.getElementById('metric-total-stocks').innerText = `${stocks.length.toLocaleString()} 檔`;
+      document.getElementById('metric-up-count').innerText = `▲ ${upCount}`;
+      document.getElementById('metric-down-count').innerText = `▼ ${downCount}`;
+      
+      // 轉為億元與萬張
+      const valueInYi = (totalVal / 100000000).toFixed(2);
+      const volumeInWan = (totalVol / 10000).toFixed(0);
+
+      document.getElementById('metric-total-value').innerText = `${Number(valueInYi).toLocaleString()} 億`;
+      document.getElementById('metric-total-volume').innerText = `${Number(volumeInWan).toLocaleString()} 萬張`;
+    }
+
+    // 7. 篩選與排序邏輯
+    function applyFiltersAndSort() {
+      let result = [...state.allStocks];
+
+      // A. 文字搜尋過濾
+      if (state.searchQuery) {
+        const q = state.searchQuery.toLowerCase().trim();
+        result = result.filter(s => 
+          s.code.toLowerCase().includes(q) || 
+          s.name.toLowerCase().includes(q)
+        );
+      }
+
+      // B. 漲跌狀態過濾
+      if (state.trendFilter === 'UP') {
+        result = result.filter(s => s.change > 0);
+      } else if (state.trendFilter === 'DOWN') {
+        result = result.filter(s => s.change < 0);
+      } else if (state.trendFilter === 'FLAT') {
+        result = result.filter(s => s.change === 0);
+      }
+
+      // C. 動態排序
+      result.sort((a, b) => {
+        let valA = a[state.sortColumn];
+        let valB = b[state.sortColumn];
+
+        // 處理 null / undefined
+        if (valA === null || valA === undefined) valA = -999999;
+        if (valB === null || valB === undefined) valB = -999999;
+
+        if (typeof valA === 'string') {
+          return state.sortDirection === 'asc' 
+            ? valA.localeCompare(valB) 
+            : valB.localeCompare(valA);
+        } else {
+          return state.sortDirection === 'asc' 
+            ? valA - valB 
+            : valB - valA;
+        }
+      });
+
+      state.filteredStocks = result;
+      state.currentPage = 1; // 重置回第一頁
+
+      updateSortIcons();
+      renderTable();
+    }
+
+    // 8. 表格 DOM 渲染
+    function renderTable() {
+      const tbody = document.getElementById('stock-table-body');
+      const noDataMsg = document.getElementById('no-data-msg');
+      tbody.innerHTML = '';
+
+      const total = state.filteredStocks.length;
+
+      if (total === 0) {
+        noDataMsg.classList.remove('hidden');
+        renderPaginationControls(0);
+        return;
+      }
+      noDataMsg.classList.add('hidden');
+
+      // 分頁計算
+      const startIndex = (state.currentPage - 1) * state.pageSize;
+      const endIndex = Math.min(startIndex + state.pageSize, total);
+      const pageData = state.filteredStocks.slice(startIndex, endIndex);
+
+      const fragment = document.createDocumentFragment();
+
+      pageData.forEach(s => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-100/60 dark:hover:bg-slate-700/40 transition-colors border-b border-slate-100 dark:border-slate-800';
+
+        // 漲跌色彩設定
+        let priceColorClass = 'text-slate-700 dark:text-slate-200';
+        let changeBgClass = 'text-slate-500';
+        let prefix = '';
+
+        if (s.change > 0) {
+          priceColorClass = 'text-red-500 dark:text-red-400 font-semibold';
+          changeBgClass = 'text-red-500 dark:text-red-400';
+          prefix = '▲ ';
+        } else if (s.change < 0) {
+          priceColorClass = 'text-green-500 dark:text-green-400 font-semibold';
+          changeBgClass = 'text-green-500 dark:text-green-400';
+          prefix = '▼ ';
+        }
+
+        // 成交張數 (股數 / 1000)
+        const volumeInSheets = Math.round(s.tradeVolume / 1000);
+        // 成交金額 (轉為萬元)
+        const valueInWan = Math.round(s.tradeValue / 10000);
+
+        tr.innerHTML = `
+          <td class="py-3 px-4 font-bold text-slate-800 dark:text-slate-100">${escapeHtml(s.code)}</td>
+          <td class="py-3 px-4 font-sans font-medium text-slate-900 dark:text-slate-100">${escapeHtml(s.name)}</td>
+          <td class="py-3 px-4 text-right ${priceColorClass}">${formatNumber(s.close)}</td>
+          <td class="py-3 px-4 text-right ${changeBgClass}">${prefix}${formatNumber(Math.abs(s.change))}</td>
+          <td class="py-3 px-4 text-right ${changeBgClass}">${prefix}${formatNumber(Math.abs(s.changePercent))}%</td>
+          <td class="py-3 px-4 text-right text-slate-600 dark:text-slate-400 hidden sm:table-cell">${formatNumber(s.open)}</td>
+          <td class="py-3 px-4 text-right text-slate-600 dark:text-slate-400 hidden md:table-cell">${formatNumber(s.high)}</td>
+          <td class="py-3 px-4 text-right text-slate-600 dark:text-slate-400 hidden md:table-cell">${formatNumber(s.low)}</td>
+          <td class="py-3 px-4 text-right text-slate-800 dark:text-slate-200 font-medium">${volumeInSheets.toLocaleString()}</td>
+          <td class="py-3 px-4 text-right text-slate-800 dark:text-slate-200 hidden lg:table-cell">${valueInWan.toLocaleString()}</td>
+        `;
+        fragment.appendChild(tr);
+      });
+
+      tbody.appendChild(fragment);
+
+      // 更新分頁控制項
+      renderPaginationControls(total, startIndex + 1, endIndex);
+    }
+
+    // 9. 分頁按鈕 UI 產生
+    function renderPaginationControls(total, start = 0, end = 0) {
+      const info = document.getElementById('pagination-info');
+      const container = document.getElementById('pagination-buttons');
+      
+      info.innerText = `顯示第 ${start} 至 ${end} 筆，共 ${total.toLocaleString()} 筆資料`;
+      container.innerHTML = '';
+
+      if (total === 0) return;
+
+      const totalPages = Math.ceil(total / state.pageSize);
+
+      // 上一頁按鈕
+      const prevBtn = document.createElement('button');
+      prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+      prevBtn.disabled = state.currentPage === 1;
+      prevBtn.className = `px-2.5 py-1 rounded border border-slate-300 dark:border-slate-600 ${
+        state.currentPage === 1 
+          ? 'opacity-40 cursor-not-allowed' 
+          : 'hover:bg-slate-200 dark:hover:bg-slate-700'
+      }`;
+      prevBtn.onclick = () => { state.currentPage--; renderTable(); };
+      container.appendChild(prevBtn);
+
+      // 頁碼邏輯 (最多顯示 5 個按鈕)
+      let startPage = Math.max(1, state.currentPage - 2);
+      let endPage = Math.min(totalPages, startPage + 4);
+      if (endPage - startPage < 4) {
+        startPage = Math.max(1, endPage - 4);
+      }
+
+      for (let p = startPage; p <= endPage; p++) {
+        const pageBtn = document.createElement('button');
+        pageBtn.innerText = p;
+        if (p === state.currentPage) {
+          pageBtn.className = 'px-3 py-1 rounded bg-red-500 text-white font-bold shadow-xs';
+        } else {
+          pageBtn.className = 'px-3 py-1 rounded border border-slate-300 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-700';
+          pageBtn.onclick = () => { state.currentPage = p; renderTable(); };
+        }
+        container.appendChild(pageBtn);
+      }
+
+      // 下一頁按鈕
+      const nextBtn = document.createElement('button');
+      nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+      nextBtn.disabled = state.currentPage === totalPages;
+      nextBtn.className = `px-2.5 py-1 rounded border border-slate-300 dark:border-slate-600 ${
+        state.currentPage === totalPages 
+          ? 'opacity-40 cursor-not-allowed' 
+          : 'hover:bg-slate-200 dark:hover:bg-slate-700'
+      }`;
+      nextBtn.onclick = () => { state.currentPage++; renderTable(); };
+      container.appendChild(nextBtn);
+    }
+
+    // 10. 事件處理器 (Event Handlers)
+    function handleSearchInput(val) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        state.searchQuery = val;
+        applyFiltersAndSort();
+      }, 300); // 300ms Debounce
+    }
+
+    function setTrendFilter(type) {
+      state.trendFilter = type;
+
+      // 切換按鈕樣式
+      ['all', 'up', 'down', 'flat'].forEach(t => {
+        const btn = document.getElementById(`filter-${t}`);
+        if (t.toUpperCase() === type) {
+          btn.className = 'px-3 py-1.5 rounded-md bg-white dark:bg-slate-800 shadow-xs font-bold transition text-slate-900 dark:text-slate-100';
+        } else {
+          let textClr = 'text-slate-500';
+          if (t === 'up') textClr = 'text-red-500';
+          if (t === 'down') textClr = 'text-green-500';
+          btn.className = `px-3 py-1.5 rounded-md ${textClr} hover:bg-white/50 dark:hover:bg-slate-800/50 transition font-normal`;
+        }
+      });
+
+      applyFiltersAndSort();
+    }
+
+    function handlePageSizeChange(val) {
+      state.pageSize = parseInt(val, 10);
+      applyFiltersAndSort();
+    }
+
+    function handleDateChange(val) {
+      loadStockData(val);
+    }
+
+    function sortTable(column) {
+      if (state.sortColumn === column) {
+        state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sortColumn = column;
+        state.sortDirection = 'desc'; // 預設降冪
+      }
+      applyFiltersAndSort();
+    }
+
+    function updateSortIcons() {
+      const columns = ['code', 'name', 'close', 'change', 'changePercent', 'tradeVolume', 'tradeValue'];
+      columns.forEach(col => {
+        const icon = document.getElementById(`sort-icon-${col}`);
+        if (!icon) return;
+
+        if (state.sortColumn === col) {
+          icon.className = `fa-solid fa-sort-${state.sortDirection === 'asc' ? 'up' : 'down'} text-red-500 ml-1`;
+        } else {
+          icon.className = 'fa-solid fa-sort text-slate-400/50 ml-1';
+        }
+      });
+    }
+
+    // 11. 輔助函式 (Helper Utilities)
+    function updateMarketStatusBadge(dataDate) {
+      const badge = document.getElementById('market-status-badge');
+      const today = getTaiwanTodayDate();
+
+      if (dataDate === today) {
+        badge.innerHTML = '<i class="fa-solid fa-check mr-1"></i> 今日最新盤後資料';
+        badge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+      } else {
+        badge.innerHTML = '<i class="fa-solid fa-clock-rotate-left mr-1"></i> 歷期盤後資料';
+        badge.className = 'px-2.5 py-1 text-xs font-semibold rounded-full bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300';
+      }
+    }
+
+    function getTaiwanTodayDate() {
+      return new Intl.DateTimeFormat('en-CA', { 
+        timeZone: 'Asia/Taipei',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+    }
+
+    function formatNumber(val) {
+      if (val === null || val === undefined || isNaN(val)) return '--';
+      return Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    // 12. Mock Data 產生器 (供無 Server 環境預覽測試)
+    function generateMockStockData() {
+      const mockList = [
+        { code: "2330", name: "台積電", close: 980.0, change: 15.0, tradeVolume: 35200000, tradeValue: 34496000000, open: 970.0, high: 985.0, low: 968.0 },
+        { code: "2317", name: "鴻海", close: 185.5, change: -2.5, tradeVolume: 42100000, tradeValue: 7809550000, open: 188.0, high: 189.0, low: 184.5 },
+        { code: "2454", name: "聯發科", close: 1210.0, change: 30.0, tradeVolume: 8200000, tradeValue: 9922000000, open: 1190.0, high: 1220.0, low: 1185.0 },
+        { code: "2308", name: "台達電", close: 380.0, change: 0.0, tradeVolume: 5100000, tradeValue: 1938000000, open: 380.0, high: 383.0, low: 378.0 },
+        { code: "2881", name: "富邦金", close: 82.4, change: 0.8, tradeVolume: 18500000, tradeValue: 1524400000, open: 81.8, high: 82.8, low: 81.5 },
+        { code: "2882", name: "國泰金", close: 63.2, change: -0.4, tradeVolume: 21000000, tradeValue: 1327200000, open: 63.6, high: 64.0, low: 63.0 },
+        { code: "2382", name: "廣達", close: 275.0, change: 8.0, tradeVolume: 29800000, tradeValue: 8195000000, open: 268.0, high: 278.0, low: 267.5 },
+        { code: "3231", name: "緯創", close: 102.5, change: -1.5, tradeVolume: 38000000, tradeValue: 3895000000, open: 104.0, high: 105.0, low: 102.0 },
+        { code: "2603", name: "長榮", close: 188.0, change: 4.5, tradeVolume: 24500000, tradeValue: 4606000000, open: 184.0, high: 190.0, low: 183.5 },
+        { code: "2609", name: "陽明", close: 64.5, change: -0.8, tradeVolume: 31200000, tradeValue: 2012400000, open: 65.5, high: 66.0, low: 64.2 },
+        { code: "0050", name: "元大台灣50", close: 172.3, change: 1.8, tradeVolume: 12400000, tradeValue: 2136520000, open: 171.0, high: 173.0, low: 170.5 },
+        { code: "00878", name: "國泰永續高股息", close: 22.85, change: -0.05, tradeVolume: 58000000, tradeValue: 1325300000, open: 22.90, high: 22.95, low: 22.80 }
+      ];
+
+      return processRawStockArray(mockList);
+    }
+  </script>
+</body>
+</html>
